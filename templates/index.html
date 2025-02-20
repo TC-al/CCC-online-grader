@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Code Compiler</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <style>
+    body { margin: 20px; background-color: #f8f9fa; }
+    #editor { height: 300px; border: 1px solid #ced4da; border-radius: .25rem; }
+    .container { max-width: 900px; }
+    #progress { font-weight: bold; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="mb-4">Code Compiler</h1>
+    <p>Write your solution below.</p>
+    <!-- Problem Selection -->
+    <div class="form-group">
+      <label for="problem">Select Problem:</label>
+      <select id="problem" class="form-control" style="max-width: 300px;">
+        <option value="default">Default Problem (Arithmetic)</option>
+        <option value="dusa">Dusa And The Yobis</option>
+        <option value="bronze">Bronze Count</option>
+        <option value="troublesome">Troublesome Keys</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="language">Select Language:</label>
+      <select id="language" class="form-control" style="max-width: 200px;">
+        <option value="java">Java</option>
+        <option value="python">Python</option>
+        <option value="javascript">JavaScript</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="code">Your Code:</label>
+      <div id="editor"></div>
+      <textarea id="code" name="code" style="display: none;"></textarea>
+    </div>
+    <button id="runButton" class="btn btn-primary mb-4">Run Code</button>
+    <button id="submitButton" class="btn btn-success mb-4 ml-2">Submit Code</button>
+    <div id="progress"></div>
+    <div id="results"></div>
+  </div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.12/ace.js" crossorigin="anonymous"></script>
+  <script>
+    var editor = ace.edit("editor");
+    editor.setTheme("ace/theme/monokai");
+
+    var templates = {
+      "java": "import java.util.Scanner;\n\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        // Write your code here\n    }\n}",
+      "python": "def main():\n    # Write your code here\n    pass\n\nif __name__ == '__main__':\n    main()",
+      "javascript": "// Write your JavaScript code here\nfunction main() {\n    // Your code here\n}\n\nmain();"
+    };
+
+    function updateEditorTemplate() {
+      var lang = document.getElementById("language").value;
+      editor.setValue(templates[lang]);
+      editor.clearSelection();
+    }
+    function updateEditorMode() {
+      var lang = document.getElementById("language").value;
+      if(lang === "java") { editor.session.setMode("ace/mode/java"); }
+      else if(lang === "python") { editor.session.setMode("ace/mode/python"); }
+      else if(lang === "javascript") { editor.session.setMode("ace/mode/javascript"); }
+    }
+    document.getElementById("language").addEventListener("change", function() {
+      updateEditorMode();
+      updateEditorTemplate();
+    });
+    updateEditorMode();
+    updateEditorTemplate();
+
+    document.getElementById("runButton").addEventListener("click", function() {
+      var code = editor.getValue();
+      var language = document.getElementById("language").value;
+      var problem = document.getElementById("problem").value;
+      var formData = new FormData();
+      formData.append("code", code);
+      formData.append("language", language);
+      formData.append("problem", problem);
+      fetch("/run", { method: "POST", body: formData })
+      .then(response => response.json())
+      .then(data => {
+        document.getElementById("progress").textContent = "";
+        var resultsDiv = document.getElementById("results");
+        resultsDiv.innerHTML = "";
+        data.results.forEach(function(result) {
+          var card = document.createElement("div");
+          card.className = "card mb-3";
+          var cardBody = `<div class="card-body">
+                            <h5 class="card-title">Test Case ${result.test_case}</h5>
+                            <p><strong>Input:</strong><br>${result.input.replace(/\n/g, '<br>')}</p>
+                            <p><strong>Expected Output:</strong> ${result.expected}</p>
+                            <p><strong>Your Output:</strong> ${result.output}</p>
+                            <p><strong>Status:</strong> ${result.passed ? '<span class="text-success">Passed</span>' : '<span class="text-danger">Failed</span>'}</p>
+                            <p><strong>Runtime:</strong> ${result.runtime} ms</p>
+                          </div>`;
+          card.innerHTML = cardBody;
+          resultsDiv.appendChild(card);
+        });
+      });
+    });
+
+    document.getElementById("submitButton").addEventListener("click", function() {
+      var code = editor.getValue();
+      var language = document.getElementById("language").value;
+      var problem = document.getElementById("problem").value;
+      var formData = new FormData();
+      formData.append("code", code);
+      formData.append("language", language);
+      formData.append("problem", problem);
+      document.getElementById("results").innerHTML = "";
+      document.getElementById("progress").textContent = "0/100";
+      fetch("/submit", { method: "POST", body: formData }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        function processStream() {
+          return reader.read().then(({done, value}) => {
+            if (done) return;
+            buffer += decoder.decode(value, {stream: true});
+            let lines = buffer.split("\n");
+            buffer = lines.pop();
+            lines.forEach(line => {
+              if (line.trim() !== "") {
+                try {
+                  let jsonData = JSON.parse(line);
+                  if (jsonData.type === "progress") {
+                    document.getElementById("progress").textContent = `${jsonData.completed}/${jsonData.total}`;
+                  } else if (jsonData.type === "failed") {
+                    // Append failed test details
+                    var resultsDiv = document.getElementById("results");
+                    var card = document.createElement("div");
+                    card.className = "card mb-3";
+                    var cardBody = `<div class="card-body">
+                                      <h5 class="card-title">Test Case ${jsonData.test_case}</h5>
+                                      <p><strong>Input:</strong><br>${jsonData.input.replace(/\n/g, '<br>')}</p>
+                                      <p><strong>Expected Output:</strong> ${jsonData.expected}</p>
+                                      <p><strong>Your Output:</strong> ${jsonData.output}</p>
+                                      <p><strong>Runtime:</strong> ${jsonData.runtime} ms</p>
+                                    </div>`;
+                    card.innerHTML = cardBody;
+                    resultsDiv.appendChild(card);
+                  } else if (jsonData.type === "summary") {
+                    let color = jsonData.final_status === "Passed" ? "green" : "red";
+                    document.getElementById("progress").innerHTML = `100/100 <span style="color: ${color}; font-weight: bold;">${jsonData.final_status}</span> (Avg runtime: ${jsonData.avg_runtime} ms, Passed: ${jsonData.passed_count}, Failed: ${jsonData.failed_count})`;
+                  }
+                } catch (e) {
+                  console.error("Error parsing JSON:", e);
+                }
+              }
+            });
+            return processStream();
+          });
+        }
+        return processStream();
+      });
+    });
+  </script>
+</body>
+</html>
